@@ -147,11 +147,61 @@ export class WeatherService {
     return weatherCodes[code] || 'Unknown';
   }
 
+  static parseCoordinates(query: string): { lat: number; lon: number } | null {
+    const coordPattern1 = /^([\-\+]?\d+\.?\d*)\s*,\s*([\-\+]?\d+\.?\d*)$/;
+    const coordPattern2 = /^([\-\+]?\d+\.?\d*)\s+([\-\+]?\d+\.?\d*)$/;
+
+    let match = query.trim().match(coordPattern1) || query.trim().match(coordPattern2);
+
+    if (match) {
+      const lat = parseFloat(match[1]);
+      const lon = parseFloat(match[2]);
+
+      if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+        return { lat, lon };
+      }
+    }
+
+    return null;
+  }
+
+  static async reverseGeocode(lat: number, lon: number): Promise<{ name: string; country: string }> {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const address = data.address || {};
+        const name = address.city || address.town || address.village ||
+                     address.county || address.state || 'Unknown Location';
+        const country = address.country || '';
+        return { name, country };
+      }
+    } catch (error) {
+      console.error('Reverse geocoding error:', error);
+    }
+
+    return { name: `Location (${lat.toFixed(4)}, ${lon.toFixed(4)})`, country: '' };
+  }
+
   static async geocodeLocation(locationName: string): Promise<{ lat: number; lon: number; name: string; country: string } | null> {
     try {
+      const coords = this.parseCoordinates(locationName);
+      if (coords) {
+        const { name, country } = await this.reverseGeocode(coords.lat, coords.lon);
+        return {
+          lat: coords.lat,
+          lon: coords.lon,
+          name,
+          country
+        };
+      }
+
       const params = new URLSearchParams({
         name: locationName,
-        count: '1',
+        count: '5',
         language: 'en',
         format: 'json'
       });
@@ -165,6 +215,29 @@ export class WeatherService {
       const data = await response.json();
 
       if (!data.results || data.results.length === 0) {
+        const nominatimParams = new URLSearchParams({
+          q: locationName,
+          format: 'json',
+          limit: '1'
+        });
+
+        const nominatimResponse = await fetch(
+          `https://nominatim.openstreetmap.org/search?${nominatimParams}`
+        );
+
+        if (nominatimResponse.ok) {
+          const nominatimData = await nominatimResponse.json();
+          if (nominatimData && nominatimData.length > 0) {
+            const result = nominatimData[0];
+            return {
+              lat: parseFloat(result.lat),
+              lon: parseFloat(result.lon),
+              name: result.display_name.split(',')[0],
+              country: result.display_name.split(',').pop()?.trim() || ''
+            };
+          }
+        }
+
         return null;
       }
 
@@ -178,6 +251,67 @@ export class WeatherService {
     } catch (error) {
       console.error('Error geocoding location:', error);
       return null;
+    }
+  }
+
+  static async searchLocations(query: string): Promise<Array<{ lat: number; lon: number; name: string; country: string; region?: string }>> {
+    try {
+      const coords = this.parseCoordinates(query);
+      if (coords) {
+        const { name, country } = await this.reverseGeocode(coords.lat, coords.lon);
+        return [{ lat: coords.lat, lon: coords.lon, name, country }];
+      }
+
+      const params = new URLSearchParams({
+        name: query,
+        count: '10',
+        language: 'en',
+        format: 'json'
+      });
+
+      const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?${params}`);
+
+      if (!response.ok) {
+        throw new Error(`Geocoding API error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.results || data.results.length === 0) {
+        const nominatimParams = new URLSearchParams({
+          q: query,
+          format: 'json',
+          limit: '10'
+        });
+
+        const nominatimResponse = await fetch(
+          `https://nominatim.openstreetmap.org/search?${nominatimParams}`
+        );
+
+        if (nominatimResponse.ok) {
+          const nominatimData = await nominatimResponse.json();
+          return nominatimData.map((result: any) => ({
+            lat: parseFloat(result.lat),
+            lon: parseFloat(result.lon),
+            name: result.display_name.split(',')[0],
+            country: result.display_name.split(',').pop()?.trim() || '',
+            region: result.display_name
+          }));
+        }
+
+        return [];
+      }
+
+      return data.results.map((result: any) => ({
+        lat: result.latitude,
+        lon: result.longitude,
+        name: result.name,
+        country: result.country || '',
+        region: result.admin1 || ''
+      }));
+    } catch (error) {
+      console.error('Error searching locations:', error);
+      return [];
     }
   }
 }
