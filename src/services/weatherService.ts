@@ -1,4 +1,4 @@
-import { WeatherData } from '../lib/supabase';
+import { searchFamousLocations } from '../data/famousLocations';
 
 export interface WeatherForecast {
   date: string;
@@ -199,6 +199,17 @@ export class WeatherService {
         };
       }
 
+      const famousLocations = searchFamousLocations(locationName);
+      if (famousLocations.length > 0) {
+        const location = famousLocations[0];
+        return {
+          lat: location.lat,
+          lon: location.lon,
+          name: location.name,
+          country: location.country
+        };
+      }
+
       const params = new URLSearchParams({
         name: locationName,
         count: '5',
@@ -262,6 +273,15 @@ export class WeatherService {
         return [{ lat: coords.lat, lon: coords.lon, name, country }];
       }
 
+      const famousLocations = searchFamousLocations(query);
+      const famousResults = famousLocations.map(loc => ({
+        lat: loc.lat,
+        lon: loc.lon,
+        name: loc.name,
+        country: loc.country,
+        region: loc.region
+      }));
+
       const params = new URLSearchParams({
         name: query,
         count: '10',
@@ -272,12 +292,19 @@ export class WeatherService {
       const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?${params}`);
 
       if (!response.ok) {
+        if (famousResults.length > 0) {
+          return famousResults;
+        }
         throw new Error(`Geocoding API error: ${response.statusText}`);
       }
 
       const data = await response.json();
 
       if (!data.results || data.results.length === 0) {
+        if (famousResults.length > 0) {
+          return famousResults;
+        }
+
         const nominatimParams = new URLSearchParams({
           q: query,
           format: 'json',
@@ -290,28 +317,38 @@ export class WeatherService {
 
         if (nominatimResponse.ok) {
           const nominatimData = await nominatimResponse.json();
-          return nominatimData.map((result: any) => ({
+          const nominatimResults = nominatimData.map((result: any) => ({
             lat: parseFloat(result.lat),
             lon: parseFloat(result.lon),
             name: result.display_name.split(',')[0],
             country: result.display_name.split(',').pop()?.trim() || '',
             region: result.display_name
           }));
+          return [...famousResults, ...nominatimResults];
         }
 
-        return [];
+        return famousResults;
       }
 
-      return data.results.map((result: any) => ({
+      const apiResults = data.results.map((result: any) => ({
         lat: result.latitude,
         lon: result.longitude,
         name: result.name,
         country: result.country || '',
         region: result.admin1 || ''
       }));
+
+      return [...famousResults, ...apiResults];
     } catch (error) {
       console.error('Error searching locations:', error);
-      return [];
+      const famousLocations = searchFamousLocations(query);
+      return famousLocations.map(loc => ({
+        lat: loc.lat,
+        lon: loc.lon,
+        name: loc.name,
+        country: loc.country,
+        region: loc.region
+      }));
     }
   }
 }

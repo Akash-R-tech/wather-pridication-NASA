@@ -1,4 +1,4 @@
-import { RiskThresholds, RiskAssessment } from '../lib/supabase';
+import { RiskThresholds } from '../lib/supabase';
 import { WeatherForecast } from './weatherService';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'severe';
